@@ -1,0 +1,3 @@
+# This file ensures the logs directory is tracked by git
+# Runtime logs will be stored here
+# Log files are ignored by .gitignore but this directory structure is preserved

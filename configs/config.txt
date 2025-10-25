@@ -1,0 +1,65 @@
+# Raspberry Pi Boot Configuration for Recovery System
+# This file controls how the Raspberry Pi boots and enables recovery mode
+
+# Basic Raspberry Pi settings
+arm_64bit=1
+enable_uart=1
+gpu_mem=64
+dtparam=spi=on
+dtparam=i2c_arm=on
+
+# Boot timeout and selection
+boot_delay=3
+boot_delay_ms=3000
+
+# Recovery mode detection
+# The system will check for /boot/recovery_mode file
+# If present, it will boot into recovery mode
+# Otherwise, it will boot normally
+
+# Boot device configuration
+# This will be dynamically updated by the boot scripts
+include boot_selection.txt
+
+# Original configuration backup
+# Your original config.txt will be backed up as config_original.txt
+include config_original.txt
+
+# Performance settings for both normal and recovery mode
+over_voltage=2
+arm_freq=1500
+gpu_freq=500
+
+# Memory split for headless operation (recovery systems typically don't need GUI)
+# Increase if you plan to use desktop environment
+gpu_mem_256=16
+gpu_mem_512=16
+gpu_mem_1024=16
+
+# HDMI settings (uncomment if you need HDMI output in recovery)
+# hdmi_force_hotplug=1
+# hdmi_drive=2
+
+# Audio settings (disabled by default to save resources)
+dtparam=audio=off
+
+# Additional device tree overlays can be added here
+# dtoverlay=example-overlay
+
+# Network boot fallback (optional)
+# Enable if you want network boot capability
+# program_usb_boot_mode=1
+
+# Conditional settings based on Pi model
+[pi4]
+# Pi 4 specific settings
+max_framebuffers=2
+dtoverlay=vc4-fkms-v3d
+boot_delay=1
+
+[pi5]
+# Pi 5 specific settings  
+dtoverlay=vc4-kms-v3d-pi5
+
+[all]
+# Settings for all Pi models

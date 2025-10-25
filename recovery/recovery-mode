@@ -1,0 +1,29 @@
+#!/bin/bash
+# Script to trigger recovery mode on next boot
+
+RECOVERY_TRIGGER="/boot/recovery_mode"
+
+case "$1" in
+    enable)
+        touch "$RECOVERY_TRIGGER"
+        echo "Recovery mode will be activated on next reboot"
+        echo "Reboot with: sudo reboot"
+        ;;
+    disable)
+        rm -f "$RECOVERY_TRIGGER"
+        echo "Recovery mode disabled"
+        ;;
+    status)
+        if [ -f "$RECOVERY_TRIGGER" ]; then
+            echo "Recovery mode: ENABLED (next boot)"
+        else
+            echo "Recovery mode: DISABLED"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {enable|disable|status}"
+        echo "  enable  - Enable recovery mode on next boot"
+        echo "  disable - Disable recovery mode"
+        echo "  status  - Check recovery mode status"
+        ;;
+esac
