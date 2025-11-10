@@ -31,6 +31,46 @@ check_root() {
     fi
 }
 
+# Function to check if target device is mounted
+check_device_not_mounted() {
+    local target_device="$1"
+    
+    print_status "Checking if target device is mounted..."
+    
+    # Check if the device exists
+    if [[ ! -b "$target_device" ]]; then
+        print_error "Device $target_device does not exist or is not a block device"
+        exit 1
+    fi
+    
+    # Check if any partition of the device is mounted
+    local mounted_partitions=$(mount | grep "^$target_device" | wc -l)
+    if [[ $mounted_partitions -gt 0 ]]; then
+        print_error "Device $target_device or its partitions are currently mounted:"
+        mount | grep "^$target_device" | while read line; do
+            print_error "  $line"
+        done
+        print_error "Please unmount all partitions before proceeding"
+        print_status "You can unmount with: sudo umount ${target_device}*"
+        exit 1
+    fi
+    
+    # Additional check for device base name (e.g., /dev/sda might have /dev/sda1, /dev/sda2)
+    local device_base=$(basename "$target_device")
+    local mounted_related=$(mount | grep "${device_base}[0-9]" | wc -l)
+    if [[ $mounted_related -gt 0 ]]; then
+        print_error "Partitions related to $target_device are currently mounted:"
+        mount | grep "${device_base}[0-9]" | while read line; do
+            print_error "  $line"
+        done
+        print_error "Please unmount all related partitions before proceeding"
+        print_status "You can unmount with: sudo umount ${target_device}*"
+        exit 1
+    fi
+    
+    print_success "Target device $target_device is not mounted - safe to proceed"
+}
+
 # Function to show workflow steps
 show_workflow() {
     print_status "Complete Pi Disk Creation Workflow"
@@ -79,6 +119,7 @@ main() {
     
     # Pre-flight checks
     check_root
+    check_device_not_mounted "$target_device"
     show_workflow
     
     # Confirmation
