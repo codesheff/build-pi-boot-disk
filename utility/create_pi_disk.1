@@ -1,0 +1,162 @@
+CREATE_PI_DISK(1)                User Commands               CREATE_PI_DISK(1)
+
+NAME
+       create_pi_disk.sh - create bootable Raspberry Pi disks with dual root 
+       partitions
+
+SYNOPSIS
+       create_pi_disk.sh [BACKUP_IMAGE] [TARGET_DEVICE]
+       create_pi_disk.sh -h|--help
+
+DESCRIPTION
+       create_pi_disk.sh creates bootable Raspberry Pi disks from backup images
+       with a unique dual-root partition layout that enables instant factory 
+       reset capabilities without external tools.
+
+       The script creates three partitions:
+       • Boot partition (FAT32, 512MB) - Standard Pi boot files
+       • Active root partition (ext4, 3.5GB) - Running system
+       • Backup root partition (ext4, 3.5GB) - Pristine backup copy
+
+       A reset script is automatically installed on the target device, allowing
+       the system to be restored to its original state at any time.
+
+OPTIONS
+       BACKUP_IMAGE
+              Path to the Pi backup image file. If not specified, the script
+              will automatically find the latest backup in /home/pi/pi-images/
+              matching the pattern pi-backup-*.img.
+
+       TARGET_DEVICE
+              Target block device for disk creation. Default is /dev/sdc.
+              Must be an unmounted block device with at least 8GB capacity.
+
+       -h, --help
+              Display usage information and exit.
+
+EXAMPLES
+       Create disk using latest backup and default device:
+              sudo create_pi_disk.sh
+
+       Use specific backup image:
+              sudo create_pi_disk.sh /home/pi/pi-images/pi-backup-20251108.img
+
+       Specify both backup and target device:
+              sudo create_pi_disk.sh backup.img /dev/sdd
+
+       Reset system on target Pi (after deployment):
+              sudo pi-reset.sh
+
+EXIT STATUS
+       0      Success
+       1      General error (invalid arguments, device issues, etc.)
+
+FILES
+       /home/pi/pi-images/
+              Default location for backup images
+
+       /usr/local/bin/pi-reset.sh
+              Reset script installed on target device
+
+       /usr/local/bin/reset-pi
+              Convenience symlink to reset script
+
+DISK LAYOUT
+       The created disk has the following partition layout:
+
+       Partition 1: Boot partition (512MB, FAT32, bootable)
+       • Contains Pi firmware, kernel, and boot configuration
+       • Mounted as /boot when system is running
+       • Shared between both root partitions
+
+       Partition 2: Active root partition (3.5GB, ext4)
+       • The root filesystem that the Pi boots from
+       • Contains the running system and user modifications
+       • Referenced as /dev/mmcblk0p2 in fstab
+
+       Partition 3: Backup root partition (3.5GB, ext4)
+       • Pristine copy of the original system
+       • Used by reset script to restore system
+       • Normally unmounted during operation
+
+RESET SYSTEM
+       The script installs a comprehensive reset system on the target Pi:
+
+       Reset Script Location: /usr/local/bin/pi-reset.sh
+       • Requires root privileges (sudo)
+       • Prompts for confirmation before proceeding
+       • Syncs backup partition to active partition
+       • Updates configuration files automatically
+       • Requires system reboot to complete
+
+       Reset Process:
+       1. User runs: sudo pi-reset.sh
+       2. Script confirms destructive operation
+       3. Backup partition is mounted
+       4. Active partition is replaced with backup contents
+       5. Configuration files are updated
+       6. System reboot is required
+
+REQUIREMENTS
+       System Requirements:
+       • Linux system with root access
+       • Standard utilities: fdisk, mkfs.vfat, mkfs.ext4, rsync
+       • Loop device support
+       • At least 8GB target device
+
+       Backup Image Requirements:
+       • Valid Pi disk image with partition table
+       • Created with backup_pi_image.sh or compatible tool
+       • Contains at least boot and root partitions
+
+SECURITY CONSIDERATIONS
+       • Script must run as root (uses sudo)
+       • Target device will be completely overwritten
+       • Reset functionality requires root access on target Pi
+       • Reset operation is irreversible
+
+DIAGNOSTICS
+       The script provides detailed status information during operation:
+
+       [INFO] - Informational messages about progress
+       [SUCCESS] - Successful completion of operations
+       [WARNING] - Important warnings requiring attention
+       [ERROR] - Error conditions that prevent completion
+
+       Common error conditions:
+       • Insufficient privileges (not running as root)
+       • Target device not found or not a block device
+       • Target device has mounted partitions
+       • Insufficient space on target device
+       • Invalid or missing backup image
+       • Missing required system utilities
+
+INTEGRATION
+       This script is designed to work with backup_pi_image.sh:
+
+       Complete Workflow:
+       1. Create backup: sudo backup_pi_image.sh
+       2. Create disk: sudo create_pi_disk.sh
+       3. Deploy to Pi hardware
+       4. Reset when needed: sudo pi-reset.sh
+
+LIMITATIONS
+       • Requires at least 8GB target device
+       • Root partitions are fixed at 3.5GB each
+       • Uses DOS/MBR partition table (not GPT)
+       • Reset script assumes standard Pi device names
+       • No built-in partition resizing
+
+BUGS
+       Report bugs to the project repository or maintainer.
+
+AUTHOR
+       Created for the build-pi-boot-disk project.
+
+SEE ALSO
+       backup_pi_image.sh(1), fdisk(8), mkfs.ext4(8), rsync(1)
+
+VERSION
+       create_pi_disk.sh version 1.0
+
+build-pi-boot-disk                November 2025               CREATE_PI_DISK(1)
