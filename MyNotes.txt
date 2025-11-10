@@ -1,0 +1,18 @@
+
+
+To do , 
+
+Keep checking the cloud init file setup works
+
+target partition should match the current one
+( there's a script to compare - utility/compare-cloud-init.sh)
+
+Once that's done..
+Check if you can use the new disk to boot up and connect
+
+
+If that works.. look into recreating filesystem from Backup
+ ( probably using reset script that already gets put in place)
+ and also retriggering the cloud init
+
+ Can this be done during the boot process?( ie. before partition is mounted?)

@@ -1,0 +1,21 @@
+#cloud-config
+hostname: {{HOSTNAME}}
+manage_etc_hosts: true
+packages:
+- avahi-daemon
+apt:
+  conf: |
+    Acquire {
+      Check-Date "false";
+    };
+
+users:
+- name: {{USERNAME}}
+  groups: users,adm,dialout,audio,netdev,video,plugdev,cdrom,games,input,gpio,spi,i2c,render,sudo
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: {{PASSWORD_HASH}}
+  ssh_authorized_keys:
+{{SSH_KEYS}}
+  sudo: ALL=(ALL) NOPASSWD:ALL
+

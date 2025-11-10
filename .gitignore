@@ -1,0 +1,119 @@
+# Raspberry Pi Boot Disk Project - Git Ignore Rules
+
+# Downloaded Ubuntu images (can be large, re-downloadable)
+images/*.img
+images/*.img.xz
+images/*.iso
+images/*.zip
+
+# Log files (runtime generated)
+logs/*.log
+logs/*.txt
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime directories (created during execution)
+/tmp/
+temp/
+
+# Backup files
+*.bak
+*.backup
+
+# Recovery system generated files (these are created on the target device)
+recovery/*.log
+recovery/backup/*.tar.gz
+recovery/backup/*.info
+recovery/logs/*.log
+
+# SSH keys and sensitive files
+*.pem
+*.key
+id_rsa*
+known_hosts
+
+# Cloud-init secrets and sensitive configuration  
+docs/secrets.sh
+cloud-init-templates/secrets.env
+*.secret
+
+# Build artifacts
+*.o
+*.so
+*.a
+
+# Python cache (if any Python scripts are added)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Node modules (if any JS tools are added)
+node_modules/
+npm-debug.log*
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Local configuration overrides
+config.local.*
+*.local
+
+# Test files and coverage
+coverage/
+*.cover
+.pytest_cache/
+
+# Documentation build files
+docs/_build/
+site/
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Windows
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Keep directory structure but ignore contents where appropriate
+!images/.gitkeep
+!logs/.gitkeep
+
+# configuration files with sensitive data
+scripts/apply-cloud-init.conf
+output3.img
+pi-boot.img
+
+# backup directories
+backups/*
