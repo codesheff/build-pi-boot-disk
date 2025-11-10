@@ -117,3 +117,4 @@ pi-boot.img
 
 # backup directories
 backups/*
+cloud-init-files/*
