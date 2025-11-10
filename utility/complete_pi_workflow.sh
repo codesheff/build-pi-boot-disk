@@ -77,15 +77,14 @@ show_workflow() {
     echo
     echo "This script will:"
     echo "  1. Download official Ubuntu Server image"
-    echo "  2. Extract current system customizations"
-    echo "  3. Create dual-partition Pi disk with customizations"
-    echo "  4. Install reset script for factory reset capability"
+    echo "  2. Create dual-partition Pi disk with cloud-init configuration"
+    echo "  3. Install reset script for factory reset capability"
     echo
     print_status "Benefits:"
     echo "  ✓ Uses official Ubuntu images (more secure and up-to-date)"
-    echo "  ✓ Preserves your user accounts, SSH keys, and network settings"
+    echo "  ✓ Uses cloud-init for reliable system configuration"
     echo "  ✓ Creates backup partition for system reset functionality"
-    echo "  ✓ Maintains all your customizations and configurations"
+    echo "  ✓ Configurable via cloud-init templates and secrets"
     echo
 }
 
@@ -133,10 +132,7 @@ main() {
     # Step 1: Download Ubuntu image
     run_step "Download Ubuntu Image" "download_ubuntu_image.sh" "$ubuntu_version"
     
-    # Step 2: Extract customizations
-    run_step "Extract System Customizations" "extract_customizations.sh"
-    
-    # Step 3: Create Pi disk
+    # Step 2: Create Pi disk
     local ubuntu_image=$(ls -t /home/pi/ubuntu-images/*.img 2>/dev/null | head -1)
     if [[ ! -f "$ubuntu_image" ]]; then
         print_error "No Ubuntu image found after download"
@@ -150,9 +146,9 @@ main() {
     echo
     print_status "Your Pi disk is ready with:"
     echo "  ✓ Latest Ubuntu $ubuntu_version Server"
-    echo "  ✓ Your user accounts and SSH keys"
-    echo "  ✓ Your network configuration"
-    echo "  ✓ Your system customizations"
+    echo "  ✓ Cloud-init configuration for user setup"
+    echo "  ✓ Network configuration via cloud-init"
+    echo "  ✓ Customizable via cloud-init templates"
     echo "  ✓ Factory reset capability (sudo pi-reset.sh)"
     echo
     print_status "The disk can now be used in any Raspberry Pi!"
@@ -178,8 +174,7 @@ show_usage() {
     echo ""
     echo "This workflow script will:"
     echo "  1. Download the official Ubuntu Server image"
-    echo "  2. Extract your current system customizations"
-    echo "  3. Create a dual-partition Pi disk with all settings preserved"
+    echo "  2. Create a dual-partition Pi disk with cloud-init configuration"
     echo ""
     echo "Note: This script must be run as root (use sudo)"
 }

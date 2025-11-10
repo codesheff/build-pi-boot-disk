@@ -2,7 +2,7 @@
 
 # Pi Disk Creation Script
 # This script creates a Pi disk with dual root partitions from Ubuntu image
-# Usage: ./create_pi_disk.sh [ubuntu_image] [target_device] [customizations_dir]
+# Usage: ./create_pi_disk.sh [ubuntu_image] [target_device]
 
 set -e  # Exit on any error
 
@@ -13,7 +13,7 @@ source "$SCRIPT_DIR/cloud-init-shared.sh"
 # Configuration
 DEFAULT_UBUNTU_IMAGE="/home/pi/ubuntu-images/*.img"
 DEFAULT_TARGET_DEVICE="/dev/sda"  # Different from source
-DEFAULT_CUSTOMIZATIONS_DIR="/home/pi/system-customizations"
+
 BOOT_PARTITION_SIZE="512M"
 ROOT_PARTITION_SIZE="3584M"  # 3.5GB for each root partition
 
@@ -217,12 +217,11 @@ format_partitions() {
 # Function to generate cloud-init files using shared function
 generate_cloud_init_files() {
     local target_device="$1"
-    local hostname="${2:-pi-system}"
-    local username="${3:-pi}"
     
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local cloud_init_files_dir="$script_dir/../cloud-init-files"
     
+    print_status "Applying cloud-init configuration..."
     # Use the shared function to apply cloud-init files to the boot partition
     apply_cloud_init_files "${target_device}1" "$cloud_init_files_dir"
 }
@@ -244,7 +243,6 @@ copy_boot_partition() {
 copy_root_partitions() {
     local ubuntu_image="$1"
     local target_device="$2"
-    local customizations_dir="$3"
     
     print_status "Copying root partition to active partition (${target_device}3)..."
     
@@ -294,13 +292,8 @@ copy_root_partitions() {
     print_status "Copying files to backup root partition..."
     rsync -axHAWXS --numeric-ids "$mount_source/" "$mount_backup_part/"
     
-    # Apply customizations if provided
-    if [[ -n "$customizations_dir" && -d "$customizations_dir" ]]; then
-        print_status "Applying system customizations..."
-        apply_customizations "$customizations_dir" "$mount_active" "$mount_backup_part"
-    else
-        print_status "No customizations directory provided, using default Ubuntu configuration"
-    fi
+    # Note: System customizations are now handled by cloud-init during first boot
+    print_status "System configuration will be applied by cloud-init during first boot"
     
     # Update fstab files (Ubuntu uses LABELs, so keep them consistent)
     print_status "Updating fstab files..."
@@ -333,136 +326,7 @@ copy_root_partitions() {
     print_success "Root partitions copied successfully"
 }
 
-# Function to apply customizations
-apply_customizations() {
-    local customizations_dir="$1"
-    local mount_active="$2"
-    local mount_backup="$3"
-    
-    print_status "Applying customizations from: $customizations_dir"
-    
-    # Apply to both active and backup partitions
-    for mount_point in "$mount_active" "$mount_backup"; do
-        local partition_name=$(basename "$mount_point")
-        print_status "Applying customizations to $partition_name partition..."
-        
-        # Apply network configuration
-        if [[ -d "$customizations_dir/network" ]]; then
-            # Netplan configuration
-            if [[ -d "$customizations_dir/network/netplan" ]] && [[ -d "$mount_point/etc/netplan" ]]; then
-                cp -r "$customizations_dir/network/netplan"/* "$mount_point/etc/netplan/" 2>/dev/null || true
-                print_status "Applied Netplan configuration"
-            fi
-            
-            # Hostname
-            if [[ -f "$customizations_dir/network/hostname" ]]; then
-                cp "$customizations_dir/network/hostname" "$mount_point/etc/" 2>/dev/null || true
-                print_status "Applied hostname configuration"
-            fi
-            
-            # WiFi configuration
-            if [[ -d "$customizations_dir/network/wpa_supplicant" ]]; then
-                mkdir -p "$mount_point/etc/wpa_supplicant"
-                cp -r "$customizations_dir/network/wpa_supplicant"/* "$mount_point/etc/wpa_supplicant/" 2>/dev/null || true
-                print_status "Applied WiFi configuration"
-            fi
-        fi
-        
-        # Apply system settings
-        if [[ -d "$customizations_dir/system" ]]; then
-            # Timezone
-            if [[ -f "$customizations_dir/system/timezone" ]]; then
-                cp "$customizations_dir/system/timezone" "$mount_point/etc/" 2>/dev/null || true
-                print_status "Applied timezone configuration"
-            fi
-            
-            # Locale settings
-            if [[ -f "$customizations_dir/system/locale.gen" ]]; then
-                cp "$customizations_dir/system/locale.gen" "$mount_point/etc/" 2>/dev/null || true
-            fi
-            
-            if [[ -f "$customizations_dir/system/locale" ]]; then
-                cp "$customizations_dir/system/locale" "$mount_point/etc/default/" 2>/dev/null || true
-            fi
-            
-            # Keyboard layout
-            if [[ -f "$customizations_dir/system/keyboard" ]]; then
-                cp "$customizations_dir/system/keyboard" "$mount_point/etc/default/" 2>/dev/null || true
-                print_status "Applied keyboard configuration"
-            fi
-        fi
-        
-        # Apply SSH configuration
-        if [[ -d "$customizations_dir/ssh" ]]; then
-            # SSH daemon configuration
-            if [[ -f "$customizations_dir/ssh/sshd_config" ]]; then
-                cp "$customizations_dir/ssh/sshd_config" "$mount_point/etc/ssh/" 2>/dev/null || true
-                print_status "Applied SSH daemon configuration"
-            fi
-            
-            # SSH host keys (preserve server identity)
-            for key_file in "$customizations_dir/ssh"/ssh_host_*; do
-                if [[ -f "$key_file" ]]; then
-                    cp "$key_file" "$mount_point/etc/ssh/" 2>/dev/null || true
-                    chmod 600 "$mount_point/etc/ssh/$(basename "$key_file")" 2>/dev/null || true
-                fi
-            done
-            if ls "$customizations_dir/ssh"/ssh_host_* &>/dev/null; then
-                print_status "Applied SSH host keys"
-            fi
-        fi
-        
-        # Apply user configurations
-        if [[ -d "$customizations_dir/users" ]]; then
-            # Create users and apply their settings
-            for user_dir in "$customizations_dir/users"/*; do
-                if [[ -d "$user_dir" ]]; then
-                    local username=$(basename "$user_dir")
-                    print_status "Applying settings for user: $username"
-                    
-                    # Read user info
-                    if [[ -f "$user_dir/info.txt" ]]; then
-                        local uid gid home shell
-                        eval $(grep -E '^(uid|gid|home|shell)=' "$user_dir/info.txt")
-                        
-                        # Add user to passwd, shadow, group files
-                        if [[ -f "$customizations_dir/users.txt" ]]; then
-                            grep "^$username:" "$customizations_dir/users.txt" >> "$mount_point/etc/passwd" 2>/dev/null || true
-                        fi
-                        
-                        if [[ -f "$customizations_dir/shadow.txt" ]]; then
-                            grep "^$username:" "$customizations_dir/shadow.txt" >> "$mount_point/etc/shadow" 2>/dev/null || true
-                        fi
-                        
-                        # Create home directory and copy settings
-                        if [[ -n "$home" ]]; then
-                            mkdir -p "$mount_point$home"
-                            
-                            # Copy SSH keys
-                            if [[ -d "$user_dir/.ssh" ]]; then
-                                cp -r "$user_dir/.ssh" "$mount_point$home/" 2>/dev/null || true
-                                # Set proper ownership (will be fixed on first boot)
-                                chown -R "$uid:$gid" "$mount_point$home/.ssh" 2>/dev/null || true
-                                chmod 700 "$mount_point$home/.ssh" 2>/dev/null || true
-                                chmod 600 "$mount_point$home/.ssh"/* 2>/dev/null || true
-                            fi
-                            
-                            # Copy bash configuration
-                            for config_file in .bashrc .bash_profile .profile .bash_aliases; do
-                                if [[ -f "$user_dir/$config_file" ]]; then
-                                    cp "$user_dir/$config_file" "$mount_point$home/" 2>/dev/null || true
-                                    chown "$uid:$gid" "$mount_point$home/$config_file" 2>/dev/null || true
-                                fi
-                            done
-                        fi
-                    fi
-                fi
-            done
-        fi
-    done
-    
-    print_success "Customizations applied successfully"
-}
+
 
 # Function to create reset script on the target device
 create_reset_script() {
@@ -714,7 +578,6 @@ display_final_info() {
 main() {
     local ubuntu_image="${1:-}"
     local target_device="${2:-$DEFAULT_TARGET_DEVICE}"
-    local customizations_dir="${3:-}"
     
     print_status "Pi Disk Creation Script Starting..."
     
@@ -732,17 +595,9 @@ main() {
         print_status "Using Ubuntu image: $ubuntu_image"
     fi
     
-    # Check for customizations directory
-    if [[ -z "$customizations_dir" ]]; then
-        if [[ -d "$DEFAULT_CUSTOMIZATIONS_DIR" ]]; then
-            customizations_dir="$DEFAULT_CUSTOMIZATIONS_DIR"
-            print_status "Using default customizations: $customizations_dir"
-        else
-            print_warning "No customizations directory specified or found"
-            print_status "The disk will be created with default Ubuntu configuration"
-            print_status "Run extract_customizations.sh to create customizations"
-        fi
-    fi
+    # Cloud-init configuration will handle all system setup
+    print_status "System will be configured via cloud-init during first boot"
+    print_status "Customize via cloud-init-templates/secrets.env if needed"
     
     # Validate inputs
     validate_ubuntu_image "$ubuntu_image"
@@ -757,11 +612,7 @@ main() {
     print_warning "This will DESTROY ALL DATA on $target_device"
     print_status "Source image: $ubuntu_image"
     print_status "Target device: $target_device"
-    if [[ -n "$customizations_dir" ]]; then
-        print_status "Customizations: $customizations_dir"
-    else
-        print_status "Customizations: None (default Ubuntu configuration)"
-    fi
+    print_status "Configuration: cloud-init templates will handle system setup"
     echo
     read -p "Do you want to continue? (y/N): " -n 1 -r
     echo
@@ -774,8 +625,8 @@ main() {
     create_partition_table "$target_device"
     format_partitions "$target_device"
     copy_boot_partition "$ubuntu_image" "$target_device"
-    generate_cloud_init_files "$target_device" "control" "pi"
-    copy_root_partitions "$ubuntu_image" "$target_device" "$customizations_dir"
+    generate_cloud_init_files "$target_device"
+    copy_root_partitions "$ubuntu_image" "$target_device"
     create_reset_script "$target_device"
     
     # Display final information
@@ -784,27 +635,30 @@ main() {
 
 # Show usage information
 show_usage() {
-    echo "Usage: $0 [UBUNTU_IMAGE] [TARGET_DEVICE] [CUSTOMIZATIONS_DIR]"
+    echo "Usage: $0 [UBUNTU_IMAGE] [TARGET_DEVICE]"
     echo ""
     echo "Arguments:"
     echo "  UBUNTU_IMAGE        Path to Ubuntu image (default: latest in /home/pi/ubuntu-images/)"
     echo "  TARGET_DEVICE       Target device to write to (default: $DEFAULT_TARGET_DEVICE)"
-    echo "  CUSTOMIZATIONS_DIR  Directory with extracted customizations (default: $DEFAULT_CUSTOMIZATIONS_DIR)"
     echo ""
     echo "Examples:"
-    echo "  $0                                                    # Use latest image, default device, default customizations"
-    echo "  $0 /path/to/ubuntu.img                              # Use specific image, default device"
-    echo "  $0 /path/to/ubuntu.img /dev/sdc                     # Specify image and device"
-    echo "  $0 /path/to/ubuntu.img /dev/sdc /path/to/custom     # Specify all parameters"
+    echo "  $0                                    # Use latest image, default device"
+    echo "  $0 /path/to/ubuntu.img               # Use specific image, default device"
+    echo "  $0 /path/to/ubuntu.img /dev/sdc      # Specify image and device"
     echo ""
     echo "The script creates a disk with:"
-    echo "  - Boot partition (FAT32)"
+    echo "  - Boot partition (FAT32) with cloud-init configuration"
     echo "  - Backup root partition (ext4) - for system reset"
     echo "  - Active root partition (ext4)"
     echo ""
+    echo "Configuration:"
+    echo "  - System setup handled by cloud-init during first boot"
+    echo "  - Customize via cloud-init-templates/secrets.env"
+    echo "  - Generate cloud-init files with: cd cloud-init-templates && ./generate-cloud-init-files.sh"
+    echo ""
     echo "Required tools:"
     echo "  - download_ubuntu_image.sh  (to get Ubuntu images)"
-    echo "  - extract_customizations.sh (to extract current system settings)"
+    echo "  - cloud-init-templates/     (to configure system via cloud-init)"
     echo ""
     echo "Note: This script must be run as root (use sudo)"
 }
