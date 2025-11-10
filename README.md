@@ -51,8 +51,9 @@ This will:
 # Step 1: Download Ubuntu image
 ./download_ubuntu_image.sh 24.04
 
-# Step 2: Extract your customizations  
-./extract_customizations.sh
+# Step 2: Configure cloud-init (customize cloud-init-templates/secrets.env as needed)
+cd cloud-init-templates
+./generate-cloud-init-files.sh
 
 # Step 3: Create the Pi disk
 sudo ./create_pi_disk.sh /path/to/ubuntu/image.img /dev/sdX
@@ -179,7 +180,6 @@ build-pi-boot-disk/
 ├── utility/
 │   ├── complete_pi_workflow.sh  # Main automation script
 │   ├── download_ubuntu_image.sh # Official Ubuntu image downloader (Pi Imager)
-│   ├── extract_customizations.sh # System customization extractor
 │   ├── create_pi_disk.sh        # Pi disk creator
 │   ├── external_pi_reset.sh     # External reset tool
 │   └── backup_pi_image.sh       # Legacy backup script
@@ -198,8 +198,10 @@ sudo ./complete_pi_workflow.sh /dev/sdc 24.04  # Pi #2
 
 ### 🏢 **Production Deployment**
 ```bash
-# Extract customizations from configured system
-./extract_customizations.sh
+# Configure cloud-init for your environment
+cd cloud-init-templates
+# Edit secrets.env with your configuration
+./generate-cloud-init-files.sh
 
 # Create production disks with same configuration
 sudo ./create_pi_disk.sh /path/to/ubuntu.img /dev/sdb
@@ -257,12 +259,14 @@ sudo ./create_pi_disk.sh image.img /dev/sdX
 sudo ./external_pi_reset.sh /dev/sdX
 ```
 
-### Customization Problems
+### Configuration Problems
 - **Problem**: Settings not applied correctly
-- **Solution**: Check extraction log and retry
+- **Solution**: Check cloud-init configuration and regenerate
 ```bash
-./extract_customizations.sh
-cat /home/pi/system-customizations/EXTRACTION_SUMMARY.txt
+cd cloud-init-templates
+# Edit secrets.env as needed
+./generate-cloud-init-files.sh
+# Check generated files in ../cloud-init-files/
 ```
 
 ## Advanced Usage
@@ -273,12 +277,15 @@ cat /home/pi/system-customizations/EXTRACTION_SUMMARY.txt
 sudo ./create_pi_disk.sh /path/to/custom/ubuntu.img /dev/sdX
 ```
 
-### Selective Customizations
+### Custom Cloud-Init Configuration
 ```bash
-# Extract to custom directory
-./extract_customizations.sh /custom/output/path
+# Use custom cloud-init configuration
+cd cloud-init-templates
+cp secrets.env secrets.env.backup
+# Edit secrets.env with your specific configuration
+./generate-cloud-init-files.sh
 
-# Edit restore_customizations.sh to modify what gets applied
+# Create disk with custom configuration
 nano /custom/output/path/restore_customizations.sh
 ```
 
