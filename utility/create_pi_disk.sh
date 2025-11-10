@@ -342,8 +342,9 @@ create_reset_script() {
     cat > "$temp_mount/usr/local/bin/pi-reset.sh" << 'EOF'
 #!/bin/bash
 
-# Pi Reset Script
-# This script resets the active root partition (partition 3) from the backup partition (partition 2)
+# Pi Reset Script - Reboot-Based Implementation
+# This script schedules a system reset to happen on next boot, avoiding
+# issues with manipulating mounted filesystems during operation
 
 set -e
 
@@ -358,84 +359,125 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Configuration
+RESET_FLAG_FILE="/tmp/.pi-reset-scheduled"
+SYSTEMD_SERVICE_PATH="/etc/systemd/system/pi-reset-boot.service"
+RESET_SCRIPT_PATH="/usr/local/bin/pi-reset-boot.sh"
+
 if [[ $EUID -ne 0 ]]; then
     print_error "This script must be run as root"
     exit 1
 fi
 
-# Check for required dependencies before doing anything destructive
-print_status "Checking required dependencies..."
-
-# List of required commands
-REQUIRED_COMMANDS=("rsync" "mount" "umount" "find" "mktemp" "rm")
-MISSING_COMMANDS=()
-
-for cmd in "${REQUIRED_COMMANDS[@]}"; do
-    if ! command -v "$cmd" &>/dev/null; then
-        MISSING_COMMANDS+=("$cmd")
+# Check for --status flag
+if [[ "$1" == "--status" ]]; then
+    if [[ -f "$RESET_FLAG_FILE" ]]; then
+        print_warning "System reset is SCHEDULED for next boot"
+        print_status "Flag file: $RESET_FLAG_FILE"
+        if [[ -f "$SYSTEMD_SERVICE_PATH" ]]; then
+            print_status "Reset service: INSTALLED"
+        else
+            print_error "Reset service: MISSING (installation may have failed)"
+        fi
+    else
+        print_success "No system reset scheduled"
     fi
-done
-
-if [[ ${#MISSING_COMMANDS[@]} -gt 0 ]]; then
-    print_error "Missing required dependencies:"
-    printf '  - %s\n' "${MISSING_COMMANDS[@]}"
-    print_error "Please install the missing commands before running this script"
-    print_status "On Ubuntu/Debian: sudo apt-get install rsync coreutils util-linux"
-    exit 1
+    exit 0
 fi
 
-# Check if backup partition exists and is accessible
-print_success "All dependencies verified"
+# Check for --cancel flag
+if [[ "$1" == "--cancel" ]]; then
+    if [[ -f "$RESET_FLAG_FILE" ]]; then
+        rm -f "$RESET_FLAG_FILE"
+        systemctl disable pi-reset-boot.service 2>/dev/null || true
+        rm -f "$SYSTEMD_SERVICE_PATH"
+        rm -f "$RESET_SCRIPT_PATH"
+        systemctl daemon-reload 2>/dev/null || true
+        print_success "System reset cancelled"
+        print_status "Removed reset flag and service files"
+    else
+        print_status "No system reset was scheduled"
+    fi
+    exit 0
+fi
+
+# Main reset scheduling logic
+print_status "Pi Reset Script - Reboot-Based Reset"
+print_status "This script will schedule a reset to occur on the next boot"
+print_status ""
 
 # Check if backup partition exists and is accessible
-if ! findmnt LABEL=writable_backup &>/dev/null && ! blkid -L writable_backup &>/dev/null; then
+if ! blkid -L writable_backup &>/dev/null; then
     print_error "Backup partition (LABEL=writable_backup) not found"
     print_error "This system may not have been created with the dual-partition setup"
     exit 1
 fi
 
-# Safety check: Detect if we're running from the filesystem we're about to reset
-CURRENT_ROOT_LABEL=$(findmnt -n -o LABEL /)
-if [[ "$CURRENT_ROOT_LABEL" == "writable" ]]; then
-    print_warning "DETECTED: Running from the partition that will be reset!"
-    print_warning "This is potentially dangerous. Consider one of these safer alternatives:"
-    print_warning "  1. Boot from a USB/SD card rescue system"
-    print_warning "  2. Run from single-user mode (init=/bin/bash)"
-    print_warning "  3. Use 'telinit 1' to switch to single-user mode first"
-    print_warning ""
-    print_warning "If the reset fails partway through, you may need to power cycle"
-    print_warning "the system to recover."
-    print_warning ""
+# Check if reset is already scheduled
+if [[ -f "$RESET_FLAG_FILE" ]]; then
+    print_warning "A system reset is already scheduled for next boot!"
+    print_status "Use: sudo pi-reset.sh --cancel    to cancel the reset"
+    print_status "Use: sudo pi-reset.sh --status    to check status"
+    exit 1
 fi
 
-print_success "All dependencies verified"
-
-print_warning "This will reset the active root partition to its original state!"
-print_warning "All changes made to the system will be lost!"
+print_warning "⚠️  SYSTEM RESET SCHEDULED ⚠️"
 print_warning ""
-print_warning "IMPORTANT: During the reset process, the system may become temporarily"
-print_warning "unstable as files are being replaced. It's recommended to:"
-print_warning "  1. Close all non-essential applications"
-print_warning "  2. Ensure no other users are logged in"
-print_warning "  3. Have physical access to reboot if needed"
+print_warning "This will reset the system to its original state on next boot!"
+print_warning "ALL changes made to the system will be lost!"
 print_warning ""
-read -p "Are you sure you want to continue? (yes/NO): " -r
+print_warning "The reset will happen automatically during boot, before"
+print_warning "normal services start, avoiding filesystem conflicts."
+print_warning ""
+print_warning "What will happen:"
+print_warning "  1. System will reboot"
+print_warning "  2. Reset service will start early in boot process"
+print_warning "  3. Active partition will be restored from backup"
+print_warning "  4. System will continue normal boot with original state"
+print_warning ""
+read -p "Are you sure you want to schedule the reset? (yes/NO): " -r
 
 if [[ "$REPLY" != "yes" ]]; then
     print_status "Reset cancelled"
     exit 0
 fi
 
-print_status "Starting system reset..."
+print_status "Setting up reset-on-boot system..."
 
-# Create temporary mount points
+# Create the boot-time reset script
+cat > "$RESET_SCRIPT_PATH" << 'RESET_EOF'
+#!/bin/bash
+# Pi Reset Boot Script - Executed during boot to perform reset
+
+set -e
+
+# Logging functions
+log_info() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" | tee -a /var/log/pi-reset.log; }
+log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" | tee -a /var/log/pi-reset.log; }
+log_success() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" | tee -a /var/log/pi-reset.log; }
+
+# Configuration
+RESET_FLAG_FILE="/tmp/.pi-reset-scheduled"
+BACKUP_LABEL="writable_backup"
+ACTIVE_LABEL="writable"
+
+log_info "Pi Reset Boot Service Started"
+
+# Check if reset is actually scheduled
+if [[ ! -f "$RESET_FLAG_FILE" ]]; then
+    log_info "No reset flag found - exiting"
+    exit 0
+fi
+
+log_info "Reset flag found - beginning system reset"
+
+# Create mount points
 TEMP_DIR=$(mktemp -d)
 BACKUP_MOUNT="$TEMP_DIR/backup"
 ACTIVE_MOUNT="$TEMP_DIR/active"
 
-# Set up cleanup trap to ensure mounts are cleaned up on exit/interrupt
 cleanup_on_exit() {
-    print_status "Cleaning up on exit..."
+    log_info "Cleaning up mounts..."
     umount "$BACKUP_MOUNT" 2>/dev/null || true
     umount "$ACTIVE_MOUNT" 2>/dev/null || true
     rm -rf "$TEMP_DIR" 2>/dev/null || true
@@ -444,86 +486,131 @@ trap cleanup_on_exit EXIT INT TERM
 
 mkdir -p "$BACKUP_MOUNT" "$ACTIVE_MOUNT"
 
-# Mount backup partition using label (more reliable than device path)
-print_status "Mounting backup partition..."
-if ! mount LABEL=writable_backup "$BACKUP_MOUNT"; then
-    print_error "Failed to mount backup partition (LABEL=writable_backup)"
-    rm -rf "$TEMP_DIR"
+# Find the actual device names for the partitions
+BACKUP_DEVICE=$(blkid -L "$BACKUP_LABEL")
+ACTIVE_DEVICE=$(blkid -L "$ACTIVE_LABEL")
+
+if [[ -z "$BACKUP_DEVICE" ]] || [[ -z "$ACTIVE_DEVICE" ]]; then
+    log_error "Could not find backup or active partitions"
+    log_error "Backup device: $BACKUP_DEVICE"
+    log_error "Active device: $ACTIVE_DEVICE"
     exit 1
 fi
 
-# Verify backup partition has expected content
-if [[ ! -d "$BACKUP_MOUNT/etc" ]] || [[ ! -d "$BACKUP_MOUNT/usr" ]] || [[ ! -d "$BACKUP_MOUNT/var" ]]; then
-    print_error "Backup partition does not contain expected system directories"
-    print_error "The backup may be corrupted or incomplete"
-    umount "$BACKUP_MOUNT" 2>/dev/null || true
-    rm -rf "$TEMP_DIR"
+log_info "Found partitions - Backup: $BACKUP_DEVICE, Active: $ACTIVE_DEVICE"
+
+# Mount backup partition
+log_info "Mounting backup partition..."
+if ! mount "$BACKUP_DEVICE" "$BACKUP_MOUNT"; then
+    log_error "Failed to mount backup partition: $BACKUP_DEVICE"
     exit 1
 fi
 
-# Mount active partition directly using the device label
-print_status "Preparing active partition for reset..."
-if ! mount LABEL=writable "$ACTIVE_MOUNT"; then
-    print_error "Failed to mount active partition (LABEL=writable)"
-    umount "$BACKUP_MOUNT" 2>/dev/null || true
-    rm -rf "$TEMP_DIR"
+# Verify backup has content
+if [[ ! -d "$BACKUP_MOUNT/etc" ]] || [[ ! -d "$BACKUP_MOUNT/usr" ]]; then
+    log_error "Backup partition missing critical directories"
     exit 1
 fi
 
-print_status "Restoring system from backup (this may take several minutes)..."
+# Mount active partition
+log_info "Mounting active partition..."
+if ! mount "$ACTIVE_DEVICE" "$ACTIVE_MOUNT"; then
+    log_error "Failed to mount active partition: $ACTIVE_DEVICE"
+    exit 1
+fi
 
-# Use rsync with --delete to safely replace the filesystem
-# This approach avoids deleting everything first, which would break the running script
-if ! rsync -axHAWXS --numeric-ids --delete \
+# Perform the reset using rsync
+log_info "Restoring system from backup (this may take several minutes)..."
+if rsync -axHAWXS --numeric-ids --delete \
     --exclude=/proc \
     --exclude=/sys \
     --exclude=/dev \
     --exclude=/run \
     --exclude=/tmp \
-    --exclude="$TEMP_DIR" \
-    --exclude=/usr/local/bin/pi-reset.sh \
-    --exclude=/usr/local/bin/reset-pi \
+    --exclude=/var/log/pi-reset.log \
     "$BACKUP_MOUNT/" "$ACTIVE_MOUNT/"; then
-    print_error "Failed to restore system from backup"
-    print_error "System may be in an inconsistent state - reboot recommended"
+    
+    log_success "System restored from backup successfully"
+    
+    # Restore reset scripts
+    if [[ -f "$BACKUP_MOUNT/usr/local/bin/pi-reset.sh" ]]; then
+        cp "$BACKUP_MOUNT/usr/local/bin/pi-reset.sh" "$ACTIVE_MOUNT/usr/local/bin/" 2>/dev/null || true
+        chmod +x "$ACTIVE_MOUNT/usr/local/bin/pi-reset.sh" 2>/dev/null || true
+        ln -sf /usr/local/bin/pi-reset.sh "$ACTIVE_MOUNT/usr/local/bin/reset-pi" 2>/dev/null || true
+    fi
+    
+    # Remove reset flag and service
+    rm -f "$RESET_FLAG_FILE"
+    systemctl disable pi-reset-boot.service 2>/dev/null || true
+    
+    log_success "Reset completed successfully"
+    log_info "System will continue normal boot with restored state"
+    
+else
+    log_error "Failed to restore system from backup"
+    log_error "System may be in inconsistent state"
     exit 1
 fi
 
-# Restore the reset script (in case it was different in backup)
-print_status "Ensuring reset script is available after restore..."
-if [[ -f "$BACKUP_MOUNT/usr/local/bin/pi-reset.sh" ]]; then
-    cp "$BACKUP_MOUNT/usr/local/bin/pi-reset.sh" "$ACTIVE_MOUNT/usr/local/bin/" 2>/dev/null || true
-    chmod +x "$ACTIVE_MOUNT/usr/local/bin/pi-reset.sh" 2>/dev/null || true
-    ln -sf /usr/local/bin/pi-reset.sh "$ACTIVE_MOUNT/usr/local/bin/reset-pi" 2>/dev/null || true
+RESET_EOF
+
+chmod +x "$RESET_SCRIPT_PATH"
+
+# Create systemd service
+cat > "$SYSTEMD_SERVICE_PATH" << 'SERVICE_EOF'
+[Unit]
+Description=Pi Reset Boot Service
+Documentation=man:pi-reset(1)
+DefaultDependencies=no
+Conflicts=shutdown.target
+After=systemd-remount-fs.service
+Before=systemd-sysusers.service systemd-tmpfiles-setup.service
+ConditionPathExists=/tmp/.pi-reset-scheduled
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pi-reset-boot.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutSec=0
+
+[Install]
+WantedBy=sysinit.target
+SERVICE_EOF
+
+# Enable the service
+systemctl daemon-reload
+systemctl enable pi-reset-boot.service
+
+# Create reset flag
+touch "$RESET_FLAG_FILE"
+
+print_success "Reset scheduled successfully!"
+print_status ""
+print_status "What happens next:"
+print_status "  1. Reset flag created: $RESET_FLAG_FILE"
+print_status "  2. Boot service installed and enabled"
+print_status "  3. On next reboot, reset will happen automatically"
+print_status "  4. System will restore from backup and continue booting"
+print_status ""
+print_status "Management commands:"
+print_status "  sudo pi-reset.sh --status    # Check if reset is scheduled"
+print_status "  sudo pi-reset.sh --cancel    # Cancel scheduled reset"
+print_status ""
+print_warning "The system is now scheduled for reset on next boot!"
+
+# Ask if user wants to reboot now
+echo
+read -p "Do you want to reboot now to perform the reset? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    print_status "Rebooting system to perform reset..."
+    systemctl reboot
+else
+    print_status "Reset scheduled - reboot manually when ready"
+    print_status "The reset will happen automatically on next boot"
 fi
 
-# Fix fstab (ensure it uses the right labels - should already be correct)
-print_status "Updating system configuration..."
-sed -i 's|LABEL=writable_backup|LABEL=writable|g' "$ACTIVE_MOUNT/etc/fstab" 2>/dev/null || true
-
-# Verify critical system files exist after restore
-if [[ ! -f "$ACTIVE_MOUNT/etc/fstab" ]] || [[ ! -f "$ACTIVE_MOUNT/etc/passwd" ]]; then
-    print_error "Critical system files missing after restore"
-    print_error "System may be corrupted - manual intervention required"
-    umount "$BACKUP_MOUNT" "$ACTIVE_MOUNT" 2>/dev/null || true
-    rm -rf "$TEMP_DIR"
-    exit 1
-fi
-
-print_success "System reset completed successfully!"
-print_status "System restored from backup partition"
-
-# Final verification
-RESTORED_SIZE=$(du -sb "$ACTIVE_MOUNT" 2>/dev/null | cut -f1 || echo "0")
-if [[ "$RESTORED_SIZE" -lt 100000000 ]]; then  # Less than 100MB suggests failure
-    print_warning "Restored system appears smaller than expected"
-    print_warning "Please verify system integrity after reboot"
-fi
-
-print_warning "Please reboot the system now to complete the reset"
-print_status "After reboot, the system will be restored to its original state"
-
-# Cleanup will be handled by the EXIT trap
 EOF
 
     chmod +x "$temp_mount/usr/local/bin/pi-reset.sh"

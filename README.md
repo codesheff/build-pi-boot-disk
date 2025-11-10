@@ -159,18 +159,27 @@ The created Pi disks use a three-partition layout optimized for reliability and 
 
 ## Factory Reset System
 
-### Internal Reset (from the Pi)
+### Reboot-Based Reset (recommended)
 ```bash
+# Schedule reset for next reboot (safer, no filesystem conflicts)
 sudo pi-reset.sh
-```
-**Use when:** Pi is running and you want to reset to factory state
 
-### External Reset (safer method)
+# Check reset status
+sudo pi-reset.sh --status
+
+# Cancel scheduled reset
+sudo pi-reset.sh --cancel
+```
+**How it works:** Schedules reset via systemd service during early boot (before services start)
+
+**Use when:** Pi is running and you want to safely reset to factory state
+
+### External Reset (alternative method)
 ```bash
 # From another Linux system with Pi disk connected
 sudo ./external_pi_reset.sh /dev/sdX
 ```
-**Use when:** Pi disk is connected to another system (recommended)
+**Use when:** Pi disk is connected to another system
 
 ## File Structure
 
@@ -184,7 +193,8 @@ build-pi-boot-disk/
 │   ├── external_pi_reset.sh     # External reset tool
 │   └── backup_pi_image.sh       # Legacy backup script
 ├── PARTITION_LAYOUT_UPDATE.md   # Technical partition details
-└── PI_RESET_SAFETY.md          # Reset safety guidelines
+├── PI_RESET_SAFETY.md          # Reset safety guidelines
+└── REBOOT_RESET_SYSTEM.md      # Reboot-based reset architecture
 ```
 
 ## Common Use Cases
