@@ -118,3 +118,7 @@ pi-boot.img
 # backup directories
 backups/*
 cloud-init-files/*
+recovery-os/*
+recovery-os/build-recovery-os.sh
+recovery-os/recovery-fs.img
+test-4part-disk.img

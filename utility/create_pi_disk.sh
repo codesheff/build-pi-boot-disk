@@ -15,7 +15,8 @@ DEFAULT_UBUNTU_IMAGE="/home/pi/ubuntu-images/*.img"
 DEFAULT_TARGET_DEVICE="/dev/sda"  # Different from source
 
 BOOT_PARTITION_SIZE="512M"
-ROOT_PARTITION_SIZE="3584M"  # 3.5GB for each root partition
+ROOT_PARTITION_SIZE="3072M"  # 3GB for each root partition (reduced to make room for recovery)
+RECOVERY_PARTITION_SIZE="256M"  # 256MB for recovery OS
 
 # Colors for output
 RED='\033[0;31m'
@@ -183,6 +184,11 @@ p
 3
 
 +${ROOT_PARTITION_SIZE}
+n
+p
+4
+
++${RECOVERY_PARTITION_SIZE}
 a
 1
 w
@@ -194,8 +200,9 @@ EOF
     
     print_success "Created partition table:"
     print_status "  ${target_device}1: Boot partition (${BOOT_PARTITION_SIZE})"
-    print_status "  ${target_device}2: Root partition (backup) (${ROOT_PARTITION_SIZE})"
-    print_status "  ${target_device}3: Root partition (active) (${ROOT_PARTITION_SIZE})"
+    print_status "  ${target_device}2: Active root partition (${ROOT_PARTITION_SIZE})"
+    print_status "  ${target_device}3: Backup root partition (${ROOT_PARTITION_SIZE})"
+    print_status "  ${target_device}4: Recovery OS partition (${RECOVERY_PARTITION_SIZE})"
 }
 
 # Function to format partitions
@@ -208,8 +215,11 @@ format_partitions() {
     mkfs.vfat -F 32 -n "system-boot" "${target_device}1"
     
     # Format root partitions as ext4 with correct labels for Ubuntu
-    mkfs.ext4 -F -L "writable_backup" "${target_device}2"
-    mkfs.ext4 -F -L "writable" "${target_device}3"
+    mkfs.ext4 -F -L "writable" "${target_device}2"
+    mkfs.ext4 -F -L "writable_backup" "${target_device}3"
+    
+    # Format recovery partition as ext4
+    mkfs.ext4 -F -L "recovery" "${target_device}4"
     
     print_success "Partitions formatted successfully"
 }
@@ -244,7 +254,7 @@ copy_root_partitions() {
     local ubuntu_image="$1"
     local target_device="$2"
     
-    print_status "Copying root partition to active partition (${target_device}3)..."
+    print_status "Copying root partition to active partition (${target_device}2)..."
     
     # Create temporary mount points
     local temp_dir=$(mktemp -d)
@@ -281,8 +291,8 @@ copy_root_partitions() {
     print_status "Successfully mounted Ubuntu root partition"
     
     # Mount target partitions
-    mount "${target_device}3" "$mount_active"
-    mount "${target_device}2" "$mount_backup_part"
+    mount "${target_device}2" "$mount_active"
+    mount "${target_device}3" "$mount_backup_part"
     
     # Copy files to active partition
     print_status "Copying files to active root partition..."
@@ -336,15 +346,14 @@ create_reset_script() {
     
     # Mount the active root partition temporarily
     local temp_mount=$(mktemp -d)
-    mount "${target_device}3" "$temp_mount"
+    mount "${target_device}2" "$temp_mount"
     
     # Create the reset script
     cat > "$temp_mount/usr/local/bin/pi-reset.sh" << 'EOF'
 #!/bin/bash
 
-# Pi Reset Script - Reboot-Based Implementation
-# This script schedules a system reset to happen on next boot, avoiding
-# issues with manipulating mounted filesystems during operation
+# Pi Reset Script - Recovery OS Implementation
+# This script schedules a reset by setting boot flags for the recovery OS
 
 set -e
 
@@ -360,9 +369,10 @@ print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Configuration
-RESET_FLAG_FILE="/tmp/.pi-reset-scheduled"
-SYSTEMD_SERVICE_PATH="/etc/systemd/system/pi-reset-boot.service"
-RESET_SCRIPT_PATH="/usr/local/bin/pi-reset-boot.sh"
+RESET_FLAG_FILE="/.pi-reset-scheduled"
+BOOT_MOUNT="/boot/firmware"  # Ubuntu 24.04+ boot mount point
+CMDLINE_FILE="$BOOT_MOUNT/cmdline.txt"
+CMDLINE_BACKUP="$BOOT_MOUNT/cmdline.txt.pre-reset"
 
 if [[ $EUID -ne 0 ]]; then
     print_error "This script must be run as root"
@@ -371,30 +381,30 @@ fi
 
 # Check for --status flag
 if [[ "$1" == "--status" ]]; then
-    if [[ -f "$RESET_FLAG_FILE" ]]; then
+    if [[ -f "$BOOT_MOUNT$RESET_FLAG_FILE" ]]; then
         print_warning "System reset is SCHEDULED for next boot"
-        print_status "Flag file: $RESET_FLAG_FILE"
-        if [[ -f "$SYSTEMD_SERVICE_PATH" ]]; then
-            print_status "Reset service: INSTALLED"
-        else
-            print_error "Reset service: MISSING (installation may have failed)"
-        fi
+        print_status "Reset flag: $BOOT_MOUNT$RESET_FLAG_FILE"
+        print_status "Boot will redirect to recovery OS to perform reset"
     else
         print_success "No system reset scheduled"
+        print_status "System will boot normally"
     fi
     exit 0
 fi
 
 # Check for --cancel flag
 if [[ "$1" == "--cancel" ]]; then
-    if [[ -f "$RESET_FLAG_FILE" ]]; then
-        rm -f "$RESET_FLAG_FILE"
-        systemctl disable pi-reset-boot.service 2>/dev/null || true
-        rm -f "$SYSTEMD_SERVICE_PATH"
-        rm -f "$RESET_SCRIPT_PATH"
-        systemctl daemon-reload 2>/dev/null || true
+    if [[ -f "$BOOT_MOUNT$RESET_FLAG_FILE" ]]; then
+        rm -f "$BOOT_MOUNT$RESET_FLAG_FILE"
+        
+        # Restore original cmdline.txt if backup exists
+        if [[ -f "$CMDLINE_BACKUP" ]]; then
+            mv "$CMDLINE_BACKUP" "$CMDLINE_FILE"
+            print_status "Boot configuration restored to normal"
+        fi
+        
         print_success "System reset cancelled"
-        print_status "Removed reset flag and service files"
+        print_status "System will boot normally on next reboot"
     else
         print_status "No system reset was scheduled"
     fi
@@ -402,38 +412,42 @@ if [[ "$1" == "--cancel" ]]; then
 fi
 
 # Main reset scheduling logic
-print_status "Pi Reset Script - Reboot-Based Reset"
-print_status "This script will schedule a reset to occur on the next boot"
+print_status "Pi Reset Script - Recovery OS Based Reset"
+print_status "This system uses a dedicated recovery OS for safe reset operations"
 print_status ""
 
-# Check if backup partition exists and is accessible
+# Check if recovery partition exists
+if ! blkid -L recovery &>/dev/null; then
+    print_error "Recovery partition not found"
+    print_error "This system may not have been created with the recovery OS setup"
+    exit 1
+fi
+
+# Check if backup partition exists
 if ! blkid -L writable_backup &>/dev/null; then
-    print_error "Backup partition (LABEL=writable_backup) not found"
+    print_error "Backup partition (LABEL=writable_backup) not found"  
     print_error "This system may not have been created with the dual-partition setup"
     exit 1
 fi
 
 # Check if reset is already scheduled
-if [[ -f "$RESET_FLAG_FILE" ]]; then
+if [[ -f "$BOOT_MOUNT$RESET_FLAG_FILE" ]]; then
     print_warning "A system reset is already scheduled for next boot!"
     print_status "Use: sudo pi-reset.sh --cancel    to cancel the reset"
     print_status "Use: sudo pi-reset.sh --status    to check status"
     exit 1
 fi
 
-print_warning "⚠️  SYSTEM RESET SCHEDULED ⚠️"
+print_warning "⚠️  RECOVERY OS RESET SCHEDULED ⚠️"
 print_warning ""
 print_warning "This will reset the system to its original state on next boot!"
 print_warning "ALL changes made to the system will be lost!"
 print_warning ""
-print_warning "The reset will happen automatically during boot, before"
-print_warning "normal services start, avoiding filesystem conflicts."
-print_warning ""
-print_warning "What will happen:"
-print_warning "  1. System will reboot"
-print_warning "  2. Reset service will start early in boot process"
-print_warning "  3. Active partition will be restored from backup"
-print_warning "  4. System will continue normal boot with original state"
+print_warning "How the recovery reset works:"
+print_warning "  1. Boot configuration modified to boot recovery OS"
+print_warning "  2. Recovery OS performs DD block-level restore"
+print_warning "  3. Boot configuration restored to normal"
+print_warning "  4. System reboots to restored active partition"
 print_warning ""
 read -p "Are you sure you want to schedule the reset? (yes/NO): " -r
 
@@ -442,156 +456,50 @@ if [[ "$REPLY" != "yes" ]]; then
     exit 0
 fi
 
-print_status "Setting up reset-on-boot system..."
+print_status "Setting up recovery OS reset..."
 
-# Create the boot-time reset script
-cat > "$RESET_SCRIPT_PATH" << 'RESET_EOF'
-#!/bin/bash
-# Pi Reset Boot Script - Executed during boot to perform reset
+# Create reset flag file on boot partition
+touch "$BOOT_MOUNT$RESET_FLAG_FILE"
 
-set -e
-
-# Logging functions
-log_info() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" | tee -a /var/log/pi-reset.log; }
-log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" | tee -a /var/log/pi-reset.log; }
-log_success() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" | tee -a /var/log/pi-reset.log; }
-
-# Configuration
-RESET_FLAG_FILE="/tmp/.pi-reset-scheduled"
-BACKUP_LABEL="writable_backup"
-ACTIVE_LABEL="writable"
-
-log_info "Pi Reset Boot Service Started"
-
-# Check if reset is actually scheduled
-if [[ ! -f "$RESET_FLAG_FILE" ]]; then
-    log_info "No reset flag found - exiting"
-    exit 0
+# Backup current cmdline.txt
+if [[ ! -f "$CMDLINE_BACKUP" ]]; then
+    cp "$CMDLINE_FILE" "$CMDLINE_BACKUP"
 fi
 
-log_info "Reset flag found - beginning system reset"
-
-# Create mount points
-TEMP_DIR=$(mktemp -d)
-BACKUP_MOUNT="$TEMP_DIR/backup"
-ACTIVE_MOUNT="$TEMP_DIR/active"
-
-cleanup_on_exit() {
-    log_info "Cleaning up mounts..."
-    umount "$BACKUP_MOUNT" 2>/dev/null || true
-    umount "$ACTIVE_MOUNT" 2>/dev/null || true
-    rm -rf "$TEMP_DIR" 2>/dev/null || true
-}
-trap cleanup_on_exit EXIT INT TERM
-
-mkdir -p "$BACKUP_MOUNT" "$ACTIVE_MOUNT"
-
-# Find the actual device names for the partitions
-BACKUP_DEVICE=$(blkid -L "$BACKUP_LABEL")
-ACTIVE_DEVICE=$(blkid -L "$ACTIVE_LABEL")
-
-if [[ -z "$BACKUP_DEVICE" ]] || [[ -z "$ACTIVE_DEVICE" ]]; then
-    log_error "Could not find backup or active partitions"
-    log_error "Backup device: $BACKUP_DEVICE"
-    log_error "Active device: $ACTIVE_DEVICE"
+# Get the device PARTUUID for recovery partition
+RECOVERY_DEVICE=$(blkid -L recovery)
+if [[ -z "$RECOVERY_DEVICE" ]]; then
+    print_error "Could not find recovery partition device"
     exit 1
 fi
 
-log_info "Found partitions - Backup: $BACKUP_DEVICE, Active: $ACTIVE_DEVICE"
-
-# Mount backup partition
-log_info "Mounting backup partition..."
-if ! mount "$BACKUP_DEVICE" "$BACKUP_MOUNT"; then
-    log_error "Failed to mount backup partition: $BACKUP_DEVICE"
+RECOVERY_PARTUUID=$(blkid -s PARTUUID -o value "$RECOVERY_DEVICE")
+if [[ -z "$RECOVERY_PARTUUID" ]]; then
+    print_error "Could not determine recovery partition PARTUUID"
     exit 1
 fi
 
-# Verify backup has content
-if [[ ! -d "$BACKUP_MOUNT/etc" ]] || [[ ! -d "$BACKUP_MOUNT/usr" ]]; then
-    log_error "Backup partition missing critical directories"
-    exit 1
-fi
+print_status "Recovery partition: $RECOVERY_DEVICE (PARTUUID=$RECOVERY_PARTUUID)"
 
-# Mount active partition
-log_info "Mounting active partition..."
-if ! mount "$ACTIVE_DEVICE" "$ACTIVE_MOUNT"; then
-    log_error "Failed to mount active partition: $ACTIVE_DEVICE"
-    exit 1
-fi
+# Modify cmdline.txt to boot from recovery partition
+print_status "Modifying boot configuration for recovery OS..."
 
-# Perform the reset using rsync
-log_info "Restoring system from backup (this may take several minutes)..."
-if rsync -axHAWXS --numeric-ids --delete \
-    --exclude=/proc \
-    --exclude=/sys \
-    --exclude=/dev \
-    --exclude=/run \
-    --exclude=/tmp \
-    --exclude=/var/log/pi-reset.log \
-    "$BACKUP_MOUNT/" "$ACTIVE_MOUNT/"; then
-    
-    log_success "System restored from backup successfully"
-    
-    # Restore reset scripts
-    if [[ -f "$BACKUP_MOUNT/usr/local/bin/pi-reset.sh" ]]; then
-        cp "$BACKUP_MOUNT/usr/local/bin/pi-reset.sh" "$ACTIVE_MOUNT/usr/local/bin/" 2>/dev/null || true
-        chmod +x "$ACTIVE_MOUNT/usr/local/bin/pi-reset.sh" 2>/dev/null || true
-        ln -sf /usr/local/bin/pi-reset.sh "$ACTIVE_MOUNT/usr/local/bin/reset-pi" 2>/dev/null || true
-    fi
-    
-    # Remove reset flag and service
-    rm -f "$RESET_FLAG_FILE"
-    systemctl disable pi-reset-boot.service 2>/dev/null || true
-    
-    log_success "Reset completed successfully"
-    log_info "System will continue normal boot with restored state"
-    
-else
-    log_error "Failed to restore system from backup"
-    log_error "System may be in inconsistent state"
-    exit 1
-fi
+# Read current cmdline and modify root parameter
+CURRENT_CMDLINE=$(cat "$CMDLINE_FILE")
+RECOVERY_CMDLINE=$(echo "$CURRENT_CMDLINE" | sed "s/root=PARTUUID=[^ ]*/root=PARTUUID=$RECOVERY_PARTUUID/")
 
-RESET_EOF
+# Add init parameter for recovery mode
+RECOVERY_CMDLINE="$RECOVERY_CMDLINE init=/sbin/recovery-init"
 
-chmod +x "$RESET_SCRIPT_PATH"
+echo "$RECOVERY_CMDLINE" > "$CMDLINE_FILE"
 
-# Create systemd service
-cat > "$SYSTEMD_SERVICE_PATH" << 'SERVICE_EOF'
-[Unit]
-Description=Pi Reset Boot Service
-Documentation=man:pi-reset(1)
-DefaultDependencies=no
-Conflicts=shutdown.target
-After=systemd-remount-fs.service
-Before=systemd-sysusers.service systemd-tmpfiles-setup.service
-ConditionPathExists=/tmp/.pi-reset-scheduled
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/pi-reset-boot.sh
-StandardOutput=journal+console
-StandardError=journal+console
-TimeoutSec=0
-
-[Install]
-WantedBy=sysinit.target
-SERVICE_EOF
-
-# Enable the service
-systemctl daemon-reload
-systemctl enable pi-reset-boot.service
-
-# Create reset flag
-touch "$RESET_FLAG_FILE"
-
-print_success "Reset scheduled successfully!"
+print_success "Recovery OS reset scheduled successfully!"
 print_status ""
 print_status "What happens next:"
-print_status "  1. Reset flag created: $RESET_FLAG_FILE"
-print_status "  2. Boot service installed and enabled"
-print_status "  3. On next reboot, reset will happen automatically"
-print_status "  4. System will restore from backup and continue booting"
+print_status "  1. Reset flag created: $BOOT_MOUNT$RESET_FLAG_FILE"
+print_status "  2. Boot configuration modified to use recovery OS"  
+print_status "  3. On next reboot, recovery OS will start"
+print_status "  4. Recovery OS will restore system and reboot normally"
 print_status ""
 print_status "Management commands:"
 print_status "  sudo pi-reset.sh --status    # Check if reset is scheduled"
@@ -604,11 +512,11 @@ echo
 read -p "Do you want to reboot now to perform the reset? (y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    print_status "Rebooting system to perform reset..."
-    systemctl reboot
+    print_status "Rebooting system to perform recovery reset..."
+    reboot
 else
     print_status "Reset scheduled - reboot manually when ready"
-    print_status "The reset will happen automatically on next boot"
+    print_status "The recovery reset will happen automatically on next boot"
 fi
 
 EOF
@@ -618,10 +526,10 @@ EOF
     # Create a convenient symlink
     ln -sf /usr/local/bin/pi-reset.sh "$temp_mount/usr/local/bin/reset-pi" 2>/dev/null || true
     
-    # Also install the reset script on the backup partition
+    # Also install the reset script on backup partition...
     print_status "Installing reset script on backup partition..."
     local backup_mount=$(mktemp -d)
-    mount "${target_device}2" "$backup_mount"
+    mount "${target_device}3" "$backup_mount"
     
     # Copy the reset script to backup partition
     cp "$temp_mount/usr/local/bin/pi-reset.sh" "$backup_mount/usr/local/bin/"
@@ -637,6 +545,63 @@ EOF
     print_success "Reset script installed on both active and backup partitions"
 }
 
+# Function to install recovery OS
+install_recovery_os() {
+    local target_device="$1"
+    
+    print_status "Installing Recovery OS on partition 4..."
+    
+    # Check if recovery OS image exists
+    local recovery_image="/home/pi/build-pi-boot-disk/recovery-os/recovery-fs.img"
+    if [[ ! -f "$recovery_image" ]]; then
+        print_warning "Recovery OS image not found: $recovery_image"
+        print_status "Building recovery OS automatically..."
+        
+        # Check if build script exists
+        local build_script="/home/pi/build-pi-boot-disk/recovery-os/build-recovery-os.sh"
+        if [[ ! -f "$build_script" ]]; then
+            print_error "Recovery OS build script not found: $build_script"
+            print_error "Please ensure the recovery-os directory and build script are present"
+            exit 1
+        fi
+        
+        # Make build script executable and run it
+        chmod +x "$build_script"
+        print_status "Running recovery OS build process..."
+        
+        if ! "$build_script"; then
+            print_error "Failed to build recovery OS"
+            print_error "Please check the build log and try again"
+            exit 1
+        fi
+        
+        # Verify the image was created
+        if [[ ! -f "$recovery_image" ]]; then
+            print_error "Recovery OS build completed but image not found"
+            exit 1
+        fi
+        
+        print_success "Recovery OS built successfully"
+    fi
+    
+    # Copy the recovery OS image directly to partition 4
+    print_status "Installing recovery OS image..."
+    dd if="$recovery_image" of="${target_device}4" bs=4M status=progress
+    
+    # Verify the installation
+    if blkid "${target_device}4" | grep -q "recovery"; then
+        print_success "Recovery OS installed successfully"
+        print_status "Recovery OS features:"
+        print_status "  - Alpine Linux minimal base"
+        print_status "  - DD-based reset operations"
+        print_status "  - Boot flag detection"
+        print_status "  - Automatic restore and reboot"
+    else
+        print_error "Recovery OS installation verification failed"
+        exit 1
+    fi
+}
+
 # Function to display final information
 display_final_info() {
     local target_device="$1"
@@ -644,18 +609,34 @@ display_final_info() {
     
     print_success "Pi disk creation completed successfully!"
     echo
-    print_status "Disk Layout:"
+    print_status "Disk Layout (4-Partition Recovery System):"
     echo "  Device: $target_device"
     echo "  Partition 1: Boot partition (FAT32)"
-    echo "  Partition 2: Backup root partition (ext4)"  
-    echo "  Partition 3: Active root partition (ext4)"
+    echo "  Partition 2: Active root partition (ext4)"  
+    echo "  Partition 3: Backup root partition (ext4)"
+    echo "  Partition 4: Recovery OS partition (ext4)"
     echo
     print_status "Usage:"
     echo "  - Insert the disk into a Raspberry Pi and boot normally"
-    echo "  - The system will boot from partition 3 (active root)"
+    echo "  - The system will boot from partition 2 (active root)"
     echo "  - To reset the system: sudo pi-reset.sh or sudo reset-pi"
-    echo "  - The reset script will restore partition 3 from partition 2"
-    echo "  - Compatible with Ubuntu Server and Raspberry Pi OS images"
+    echo
+    print_status "Recovery Reset Process:"
+    echo "  1. pi-reset.sh modifies boot config to use recovery OS"
+    echo "  2. Recovery OS performs DD restore from backup to active"
+    echo "  3. Recovery OS restores normal boot config and reboots"
+    echo "  4. System boots normally with restored state"
+    echo
+    print_status "Reset Commands:"
+    echo "  - sudo pi-reset.sh           # Schedule recovery reset"
+    echo "  - sudo pi-reset.sh --status  # Check reset status" 
+    echo "  - sudo pi-reset.sh --cancel  # Cancel scheduled reset"
+    echo
+    print_status "Benefits:"
+    echo "  - 3x faster resets (DD block-level vs file copying)"
+    echo "  - No filesystem conflicts (dedicated recovery environment)"
+    echo "  - More reliable (atomic DD operations)"
+    echo "  - Emergency recovery environment available"
     echo
     print_status "Source: $backup_image"
     print_status "Created: $(date)"
@@ -715,6 +696,7 @@ main() {
     generate_cloud_init_files "$target_device"
     copy_root_partitions "$ubuntu_image" "$target_device"
     create_reset_script "$target_device"
+    install_recovery_os "$target_device"
     
     # Display final information
     display_final_info "$target_device" "$ubuntu_image"
