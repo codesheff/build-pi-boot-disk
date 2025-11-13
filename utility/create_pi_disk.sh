@@ -371,8 +371,8 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Configuration
 RESET_FLAG_FILE="/.pi-reset-scheduled"
 BOOT_MOUNT="/boot/firmware"  # Ubuntu 24.04+ boot mount point
-CMDLINE_FILE="$BOOT_MOUNT/cmdline.txt"
-CMDLINE_BACKUP="$BOOT_MOUNT/cmdline.txt.pre-reset"
+CMDLINE_FILE="$BOOT_MOUNT/current/cmdline.txt"  # Ubuntu uses current/ symlink structure
+CMDLINE_BACKUP="$BOOT_MOUNT/current/cmdline.txt.pre-reset"
 
 if [[ $EUID -ne 0 ]]; then
     print_error "This script must be run as root"
