@@ -486,7 +486,13 @@ print_status "Modifying boot configuration for recovery OS..."
 
 # Read current cmdline and modify root parameter
 CURRENT_CMDLINE=$(cat "$CMDLINE_FILE")
-RECOVERY_CMDLINE=$(echo "$CURRENT_CMDLINE" | sed "s/root=PARTUUID=[^ ]*/root=PARTUUID=$RECOVERY_PARTUUID/")
+
+# Check if root=PARTUUID= already exists and replace it, otherwise add it
+if echo "$CURRENT_CMDLINE" | grep -q "root=PARTUUID="; then
+    RECOVERY_CMDLINE=$(echo "$CURRENT_CMDLINE" | sed "s/root=PARTUUID=[^ ]*/root=PARTUUID=$RECOVERY_PARTUUID/")
+else
+    RECOVERY_CMDLINE="root=PARTUUID=$RECOVERY_PARTUUID $CURRENT_CMDLINE"
+fi
 
 # Add init parameter for recovery mode
 RECOVERY_CMDLINE="$RECOVERY_CMDLINE init=/sbin/recovery-init"
