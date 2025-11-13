@@ -15,7 +15,7 @@ DEFAULT_UBUNTU_IMAGE="/home/pi/ubuntu-images/*.img"
 DEFAULT_TARGET_DEVICE="/dev/sda"  # Different from source
 
 BOOT_PARTITION_SIZE="512M"
-ROOT_PARTITION_SIZE="3072M"  # 3GB for each root partition (reduced to make room for recovery)
+ROOT_PARTITION_SIZE="10240M"  # 10GB for each root partition
 RECOVERY_PARTITION_SIZE="256M"  # 256MB for recovery OS
 
 # Colors for output
