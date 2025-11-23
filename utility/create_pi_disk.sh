@@ -249,6 +249,50 @@ copy_boot_partition() {
     print_success "Boot partition copied successfully"
 }
 
+# Function to update boot configuration to use PARTUUID instead of LABEL
+update_boot_cmdline_to_partuuid() {
+    local target_device="$1"
+    
+    print_status "Updating boot configuration to use PARTUUID..."
+    
+    # Get the PARTUUID of the active partition (partition 2)
+    local active_partuuid=$(blkid -s PARTUUID -o value "${target_device}2")
+    
+    if [[ -z "$active_partuuid" ]]; then
+        print_error "Could not determine PARTUUID for active partition"
+        return 1
+    fi
+    
+    print_status "Active partition PARTUUID: $active_partuuid"
+    
+    # Mount the boot partition temporarily
+    local temp_boot_mount=$(mktemp -d)
+    mount "${target_device}1" "$temp_boot_mount"
+    
+    # Update cmdline.txt in current/ directory (Ubuntu's boot structure)
+    local cmdline_file="$temp_boot_mount/current/cmdline.txt"
+    
+    if [[ -f "$cmdline_file" ]]; then
+        # Read current cmdline
+        local current_cmdline=$(cat "$cmdline_file")
+        
+        # Replace root=LABEL=writable with root=PARTUUID=xxx
+        local new_cmdline=$(echo "$current_cmdline" | sed "s|root=LABEL=writable|root=PARTUUID=$active_partuuid|g")
+        
+        # Write back
+        echo "$new_cmdline" > "$cmdline_file"
+        
+        print_success "Updated cmdline.txt to use PARTUUID=$active_partuuid"
+        print_status "Boot will now use unique PARTUUID instead of shared LABEL"
+    else
+        print_warning "cmdline.txt not found at $cmdline_file"
+    fi
+    
+    # Unmount
+    umount "$temp_boot_mount"
+    rmdir "$temp_boot_mount"
+}
+
 # Function to copy root partition to both active and backup
 copy_root_partitions() {
     local ubuntu_image="$1"
@@ -699,6 +743,7 @@ main() {
     create_partition_table "$target_device"
     format_partitions "$target_device"
     copy_boot_partition "$ubuntu_image" "$target_device"
+    update_boot_cmdline_to_partuuid "$target_device"
     generate_cloud_init_files "$target_device"
     copy_root_partitions "$ubuntu_image" "$target_device"
     create_reset_script "$target_device"
