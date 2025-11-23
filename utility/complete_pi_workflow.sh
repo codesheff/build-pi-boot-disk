@@ -6,22 +6,14 @@
 
 set -e
 
-# Configuration
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source shared configuration
+source "$SCRIPT_DIR/config.sh"
+
+# Workflow-specific configuration
 DEFAULT_TARGET_DEVICE="/dev/sda"
-DEFAULT_UBUNTU_VERSION="25.10"  # LTS version for stability
-SCRIPT_DIR="$(dirname "$0")"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Function to check if running as root
 check_root() {
@@ -138,7 +130,7 @@ main() {
     run_step "Download Ubuntu Image" "download_ubuntu_image.sh" "$ubuntu_version"
     
     # Step 2: Create Pi disk
-    local ubuntu_image=$(ls -t /home/pi/ubuntu-images/*.img 2>/dev/null | head -1)
+    local ubuntu_image=$(ls -t "$DEFAULT_DOWNLOAD_DIR"/*.img 2>/dev/null | head -1)
     if [[ ! -f "$ubuntu_image" ]]; then
         print_error "No Ubuntu image found after download"
         exit 1
